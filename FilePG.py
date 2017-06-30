@@ -4,6 +4,7 @@
 File Privacy Guard (FPG) v0.1
 
 FPG can be used to batch encrypt and split files
+FPG generates passphrases for each file, and can automatically rename them
 Encryption is provided by GnuPG
 
 Requires Python 3.6+ for secrets library
@@ -19,33 +20,35 @@ from os.path import isfile, join
 from secrets import choice
 from time import time
 from sys import platform
-
-import string
+from string import digits, ascii_letters
 
 # Config parameters
 # -------------------------------
 CIPHER = "AES256"
 DIGEST = "SHA256"
-DETECTEDFILETYPES = ["zip", "7z"]    
+DETECTEDFILETYPES = ["bmp", "7z"]    
 # passphrases of this length will be used
-KEYLENGTH = 20
+PASSLENGTH = 20
 # file larger than this size in MB will be split
-SPLITLIMIT = 1000
+SPLITLIMIT = 1
 # this extension will be appended to the end of files
 EXT = ".enc"
 # compression level, "0" recommended for best performance
 COMP = "0"
+# if random rename is used, the length of the random name
+RENAMELEN = 4
 
 
-class FileObj():
+class GuardObj():
     # represents a file to be processed by FPG
 
     def __init__(self, fileName):
-        '''(str) -> FileObj
-        Initializes a FileObj with a file name
+        '''(str) -> GuardObj
+        Initializes a GuardObj with a file name
         '''
 
         self._fileName = fileName
+        self._extension = fileName[fileName.rfind(".") + 1:]
         retVal = run(["stat", "--printf=\"%s\"", fileName], stdout=PIPE)
         retVal.check_returncode()
         self._fileSize = int(retVal.stdout.decode("utf-8")[1:-1]) / 1048576
@@ -58,8 +61,8 @@ class FileObj():
         Encrypts the file represented by the object instance
         '''
 
-        alphabet = string.ascii_letters + string.digits
-        password = ''.join(choice(alphabet) for i in range(KEYLENGTH))
+        alphabet = ascii_letters + digits
+        password = ''.join(choice(alphabet) for i in range(PASSLENGTH))
         self._key = password
 
         retVal = run(["gpg", "--batch", "--passphrase", password,
@@ -74,7 +77,7 @@ class FileObj():
     def splitIfShouldSplit(self):
         '''() -> int
         If the file is larger than SPLITLIMIT, split the file
-        Returns 0 if file was actually split, else 1
+        Returns the number of pieces the file was split into
         '''
 
         if not self._isEncrypted:
@@ -83,11 +86,13 @@ class FileObj():
         if self._fileSize > SPLITLIMIT:
             retVal = run(["split", "--bytes=" + str(SPLITLIMIT) + "M",
                           "--numeric-suffixes", "--suffix-length=2",
-                          self._fileName + EXT, self._fileName + EXT + "."])
+                          "--verbose", self._fileName + EXT, self._fileName \
+                          + EXT + "."], stdout=PIPE)
             retVal.check_returncode()
+            pieces = len(retVal.stdout.decode("utf-8").split("\n")) - 1
             retVal = run(["rm", self._fileName + EXT])
             retVal.check_returncode()
-            return 0
+            return pieces
         else:
             return 1
 
@@ -137,36 +142,44 @@ class FileObj():
         return self._isEncrypted
 
 
+    def getExtension(self):
+        '''() -> str
+        Returns the extension of the file
+        '''
+
+        return self._extension
+
+
     def __str__(self):
         return str(self._fileName)
 
 
 
-def keyPrinter(fileObjList):
+def keyPrinter(guardObjList):
     '''(List) -> None
-    Prints out the encryption passphrases from a list of FileObj
+    Prints out the encryption passphrases from a list of GuardObj
     '''
 
-    for fileObj in fileObjList:
-        if fileObj.isEncrypted():
-            print(str(fileObj) + " : " + fileObj.getKey() + "\n")
+    for guardObj in guardObjList:
+        if guardObj.isEncrypted():
+            print(str(guardObj) + " : " + guardObj.getKey() + "\n")
 
 
-def totalFileSize(fileObjList):
+def totalFileSize(guardObjList):
     '''(List) -> float
-    Returns the combined total file size form a list of FileObj
+    Returns the combined total file size form a list of GuardObj
     '''
 
     totalSize = 0.0
-    for fileObj in fileObjList:
-        totalSize += fileObj.getSize()
+    for guardObj in guardObjList:
+        totalSize += guardObj.getSize()
 
     return totalSize
 
 
 def platformValidation():
     '''() -> int
-    Return 0 if platform is supported, else a status code
+    Return 0 if platform is supported, else an integer status code
     '''
 
     status = 0
@@ -181,11 +194,13 @@ def platformValidation():
     gpgVersion = retVal.stdout.decode("utf-8")
     if (gpgVersion[0:14] != "gpg (GnuPG) 2."):
         status = 3
-    if KEYLENGTH < 10:
+    if PASSLENGTH < 10:
         status = 4
-    if (CIPHER not in gpgVersion):
+    if (CIPHER not in ("IDEA", "3DES", "CAST5", "BLOWFISH", "AES", "AES192",
+        "AES256", "TWOFISH", "CAMELLIA128", "CAMELLIA192", "CAMELLIA256")):
         status = 5
-    if (DIGEST not in gpgVersion):
+    if (DIGEST not in ("SHA1", "RIPEMD160", "SHA256", "SHA384", "SHA512",
+                       "SHA224")):
         status = 6
     if (len(EXT) < 1):
         status = 7
@@ -197,87 +212,88 @@ if __name__ == "__main__":
 
     platformStatus = platformValidation()
 
-    if platformStatus != 0:
-        if platformStatus == 1:
+    if (platformStatus != 0):
+        if (platformStatus == 1):
             print("Tool should be ran on Linux. Exiting.")
-        elif platformStatus == 2:
+        elif (platformStatus == 2):
             print("GnuPG cannot be called. Exiting.")
-        elif platformStatus == 3:
+        elif (platformStatus == 3):
             print("GPG version 2.+ recommended")
-        elif platformStatus == 4:
-            print("Key length should be longer")
-        elif platformStatus == 5:
-            print("Cipher not supported")
-        elif platformStatus == 6:
-            print("Digest not supported")
+        elif (platformStatus == 4):
+            print("Passphrase length should be longer")
+        elif (platformStatus == 5):
+            print("Cipher " + CIPHER + " not supported")
+        elif (platformStatus == 6):
+            print("Digest " + DIGEST + "not supported")
         else:
             print("Extension length too short")
         quit()
 
     else:
         print("Platform and config validated\n")
+    
+    print("Using " + CIPHER + ", " + DIGEST + " with " + str(PASSLENGTH) + \
+          " character passphrases. Splitting at " + str(SPLITLIMIT) + \
+          "MB. " + EXT + " extensions." + COMP + " compression\n")
 
     fileNameList = [fi for fi in listdir("./") if (isfile(join("./", fi)) \
                                   and fi[-3:] in DETECTEDFILETYPES)]
 
-    # Create the fileObj instances
-    fileObjList = []
+    # Create the guardObj instances
+    guardObjList = []
     for fileName in fileNameList:
-        fileObjList.append(FileObj(fileName))
+        guardObjList.append(GuardObj(fileName))
 
     # some additional verification
-    if (len(fileObjList) == 0):
+    if (len(guardObjList) == 0):
         print("No supported files detected. Exiting.")
         quit()
 
     statResult = statvfs("./")
     freeSpace = round((statResult.f_bsize * statResult.f_bavail) / 1048576, 2)
-    totalFileSize = totalFileSize(fileObjList)
+    totalFileSize = totalFileSize(guardObjList)
 
     print("Free space: " + str(freeSpace) + " MB\n")
     print("Total file size " + str(totalFileSize))
-    if freeSpace < totalFileSize:
+    if (freeSpace < totalFileSize):
         print("Are you sure there is enough space?")
 
-    print(str(len(fileObjList)) + " files detected:\n")
-    for fileObj in fileObjList:
-        print(str(fileObj) + " - " + str(fileObj.getSize()) + "MB\n")
+    print(str(len(guardObjList)) + " files detected:\n")
+    for guardObj in guardObjList:
+        print(str(guardObj) + " - " + str(guardObj.getSize()) + "MB\n")
     print("...........................................")
-    print(CIPHER, DIGEST, str(KEYLENGTH) + "-char-passphrases",
-          str(SPLITLIMIT) + "-MB-splitting", EXT + "-extension",
-          COMP + "-compression\n")
 
     userIn = input("Enter 'y' to begin encryption with above parameters\n")
 
-    if userIn != 'y':
+    if (userIn != 'y'):
         quit()
 
     overallStart = time()
 
     # encryption
-    for fileObj in fileObjList:
+    for guardObj in guardObjList:
 
-        print("Working on " + str(fileObj) + ", " + str(fileObj.getSize()) + \
-              " MB")
+        print("Working on " + str(guardObj) + ", " + \
+              str(guardObj.getSize()) + " MB")
 
         start = time()
 
         try:
-            fileObj.encrypt()
+            guardObj.encrypt()
         except:
-            print("GPG error during encryption of " + str(fileObj) + "!")
+            print("GPG error during encryption of " + str(guardObj) + "!")
             while True:
                 userIn = input("Enter 'v' to view keys, 'q' to quit");
                 if userIn == 'q':
                     quit()
                 if userIn == 'v':
-                    keyPrinter(fileObjList)
+                    keyPrinter(guardObjList)
                     quit()
 
         deltaTime = time() - start
-        print(str(fileObj) + " encrypted in " + str(round(deltaTime, 2)) + \
+        print(str(guardObj) + " encrypted in " + str(round(deltaTime, 2)) + \
               " sec\n")
-        print("Average speed: " + str(fileObj.getEncryptionSpeed(deltaTime)) \
+        print("Average speed: " + str(guardObj.getEncryptionSpeed(deltaTime)) \
               + " MB/s\n")
 
     print ("All files encrypted in " + str(time() - overallStart) + "s\n")
@@ -285,23 +301,30 @@ if __name__ == "__main__":
     while userIn != 'v':
         userIn = input("Enter 'v' to view passphrases\n")
 
-    keyPrinter(fileObjList)   
+    keyPrinter(guardObjList)   
     print("This is your only chance to record these!")
 
-    userIn = input("Enter 'r' for renaming, other key to skip")
+    userIn = input("Enter 'r' for renaming, 'a' for random renaming, " +
+                   "other key to skip\n")
 
     # renaming
-    if userIn == 'r':
-        for fileObj in fileObjList:
-            print("For file: " + str(fileObj))
-            userIn = input("Enter new name: ")
-            fileObj.rename(userIn)
-            print("Renamed\n")
+    if (userIn == 'r' or userIn == 'a'):
+        for guardObj in guardObjList:
+            print("For file: " + str(guardObj))
+            if (userIn == 'r'):
+                newName = input("Enter new name: ")
+            else:
+                newName = ''.join(choice(digits) for i in range(RENAMELEN))
+                newName += "." + guardObj.getExtension()
+                print("Automatically renamed " + newName + " to " + \
+                      str(guardObj))
+            guardObj.rename(newName)
 
     # splitting
-    print("Splitting files if needed...")
-    for fileObj in fileObjList:
-        if (fileObj.splitIfShouldSplit() == 0):
-            print(str(fileObj) + " was split")
+    print("Splitting files if needed")
+    for guardObj in guardObjList:
+        pieces = guardObj.splitIfShouldSplit()
+        if (pieces == 1):
+            print(str(guardObj) + " was not split")
         else:
-            print(str(fileObj) + " was not split")
+            print(str(guardObj) + " was split into " + str(pieces) + " pieces")
