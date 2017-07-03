@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-File Privacy Guard (FPG) v0.1
+File Privacy Guard (FPG) v0.2
 
 FPG can be used to batch encrypt and split files
 FPG generates passphrases for each file, and can automatically rename them
@@ -35,8 +35,11 @@ SPLITLIMIT = 1
 EXT = ".enc"
 # compression level, "0" recommended for best performance
 COMP = "0"
+
 # if random rename is used, the length of the random name
 RENAMELEN = 4
+# if random rename is used. this fixed prefix will be added to every file name
+NAMEPREFIX = "B"
 
 
 class GuardObj():
@@ -151,7 +154,15 @@ class GuardObj():
 
 
     def __str__(self):
-        return str(self._fileName)
+        fileNameLength = len(self._fileName)
+
+        if (fileNameLength < 25):
+            displayName = self._fileName
+        else:
+            displayName = self._fileName[:10] + "..." + \
+            self._fileName[fileNameLength - 10 :]
+
+        return str(displayName)
 
 
 
@@ -254,7 +265,7 @@ if __name__ == "__main__":
     totalFileSize = totalFileSize(guardObjList)
 
     print("Free space: " + str(freeSpace) + " MB\n")
-    print("Total file size " + str(totalFileSize))
+    print("Total file size " + str(totalFileSize) + " MB\n")
     if (freeSpace < totalFileSize):
         print("Are you sure there is enough space?")
 
@@ -314,7 +325,9 @@ if __name__ == "__main__":
             if (userIn == 'r'):
                 newName = input("Enter new name: ")
             else:
-                newName = ''.join(choice(digits) for i in range(RENAMELEN))
+                # automated renaming
+                newName = NAMEPREFIX
+                newName += ''.join(choice(digits) for i in range(RENAMELEN))
                 newName += "." + guardObj.getExtension()
                 print("Automatically renamed " + newName + " to " + \
                       str(guardObj))
