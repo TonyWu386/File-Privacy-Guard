@@ -16,7 +16,7 @@ This software is licensed under the GNU GPL v3.0
 
 from subprocess import run, PIPE
 from os import listdir, statvfs
-from os.path import isfile, join
+from os.path import isfile, join, expandvars
 from secrets import choice
 from time import time
 from sys import platform
@@ -41,6 +41,11 @@ RENAMELEN = 4
 # if random rename is used. this fixed prefix will be added to every file name
 NAMEPREFIX = "B"
 
+# input path of files
+INPATH = "./"
+# output path of files
+OUTPATH = "$HOME/"
+
 
 class GuardObj():
     # represents a file to be processed by FPG
@@ -52,7 +57,8 @@ class GuardObj():
 
         self._fileName = fileName
         self._extension = fileName[fileName.rfind(".") + 1:]
-        retVal = run(["stat", "--printf=\"%s\"", fileName], stdout=PIPE)
+        retVal = run(["stat", "--printf=\"%s\"", INPATH + fileName],
+                     stdout=PIPE)
         retVal.check_returncode()
         self._fileSize = int(retVal.stdout.decode("utf-8")[1:-1]) / 1048576
         self._key = None
@@ -71,7 +77,8 @@ class GuardObj():
         retVal = run(["gpg", "--batch", "--passphrase", password,
                 "--digest-algo", DIGEST, "--symmetric",
                 "--cipher-algo", CIPHER, "--compress-level", COMP,
-                "--output", self._fileName + EXT, self._fileName])
+                "--output", OUTPATH + self._fileName + EXT,
+                INPATH + self._fileName])
 
         retVal.check_returncode()
         self._isEncrypted = True
@@ -89,11 +96,11 @@ class GuardObj():
         if self._fileSize > SPLITLIMIT:
             retVal = run(["split", "--bytes=" + str(SPLITLIMIT) + "M",
                           "--numeric-suffixes", "--suffix-length=2",
-                          "--verbose", self._fileName + EXT, self._fileName \
-                          + EXT + "."], stdout=PIPE)
+                          "--verbose", OUTPATH + self._fileName + EXT,
+                          OUTPATH + self._fileName + EXT + "."], stdout=PIPE)
             retVal.check_returncode()
             pieces = len(retVal.stdout.decode("utf-8").split("\n")) - 1
-            retVal = run(["rm", self._fileName + EXT])
+            retVal = run(["rm", OUTPATH + self._fileName + EXT])
             retVal.check_returncode()
             return pieces
         else:
@@ -104,8 +111,12 @@ class GuardObj():
         '''() -> None
         Renames the file represented by the object instance
         '''
+        
+        if not self._isEncrypted:
+            raise Exception('File has not been encrypted yet')
 
-        retVal = run(["mv", self._fileName + EXT, newName + EXT])
+        retVal = run(["mv", OUTPATH + self._fileName + EXT,
+                      OUTPATH + newName + EXT])
         retVal.check_returncode()
         self._fileName = newName
 
@@ -242,12 +253,17 @@ if __name__ == "__main__":
 
     else:
         print("Platform and config validated\n")
-    
+
+    # Handle path variables ($HOME, etc)
+    INPATH = expandvars(INPATH)
+    OUTPATH = expandvars(OUTPATH)
+
     print("Using " + CIPHER + ", " + DIGEST + " with " + str(PASSLENGTH) + \
           " character passphrases. Splitting at " + str(SPLITLIMIT) + \
-          "MB. " + EXT + " extensions." + COMP + " compression\n")
+          "MB. " + EXT + " extensions." + COMP + " compression\n" + \
+          "Outputting files at " + OUTPATH)
 
-    fileNameList = [fi for fi in listdir("./") if (isfile(join("./", fi)) \
+    fileNameList = [fi for fi in listdir(INPATH) if (isfile(join(INPATH, fi)) \
                                   and fi[-3:] in DETECTEDFILETYPES)]
 
     # Create the guardObj instances
@@ -255,16 +271,16 @@ if __name__ == "__main__":
     for fileName in fileNameList:
         guardObjList.append(GuardObj(fileName))
 
-    # some additional verification
+    # Some additional verification
     if (len(guardObjList) == 0):
         print("No supported files detected. Exiting.")
         quit()
 
-    statResult = statvfs("./")
+    statResult = statvfs(OUTPATH)
     freeSpace = round((statResult.f_bsize * statResult.f_bavail) / 1048576, 2)
     totalFileSize = totalFileSize(guardObjList)
 
-    print("Free space: " + str(freeSpace) + " MB\n")
+    print("Free space of " + OUTPATH + ": " + str(freeSpace) + " MB\n")
     print("Total file size " + str(totalFileSize) + " MB\n")
     if (freeSpace < totalFileSize):
         print("Are you sure there is enough space?")
@@ -281,7 +297,7 @@ if __name__ == "__main__":
 
     overallStart = time()
 
-    # encryption
+    # Encryption
     for guardObj in guardObjList:
 
         print("Working on " + str(guardObj) + ", " + \
@@ -318,22 +334,22 @@ if __name__ == "__main__":
     userIn = input("Enter 'r' for renaming, 'a' for random renaming, " +
                    "other key to skip\n")
 
-    # renaming
+    # Renaming
     if (userIn == 'r' or userIn == 'a'):
         for guardObj in guardObjList:
             print("For file: " + str(guardObj))
             if (userIn == 'r'):
                 newName = input("Enter new name: ")
             else:
-                # automated renaming
+                # Automated renaming
                 newName = NAMEPREFIX
                 newName += ''.join(choice(digits) for i in range(RENAMELEN))
                 newName += "." + guardObj.getExtension()
-                print("Automatically renamed " + newName + " to " + \
+                print("Automatically renaming " + newName + " to " + \
                       str(guardObj))
             guardObj.rename(newName)
 
-    # splitting
+    # Splitting
     print("Splitting files if needed")
     for guardObj in guardObjList:
         pieces = guardObj.splitIfShouldSplit()
