@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-File Privacy Guard (FPG) v0.2
+File Privacy Guard (FPG) v0.3
 
 FPG can be used to batch encrypt and split files
 FPG generates passphrases for each file, and can automatically rename them
@@ -23,28 +23,34 @@ from sys import platform
 from string import digits, ascii_letters
 
 # Config parameters
-# -------------------------------
+# ----------------------------------------------------------------------------
+
+# GPG config
 CIPHER = "AES256"
 DIGEST = "SHA256"
-DETECTEDFILETYPES = ["bmp", "7z"]    
-# passphrases of this length will be used
-PASSLENGTH = 20
-# file larger than this size in MB will be split
-SPLITLIMIT = 1
-# this extension will be appended to the end of files
-EXT = ".enc"
 # compression level, "0" recommended for best performance
 COMP = "0"
 
-# if random rename is used, the length of the random name
+DETECTEDFILETYPES = ["bmp", "7z"]
+
+# passphrases of this length will be used
+PASSLENGTH = 20
+# file larger than this size in MB will be split into chunks this size
+SPLITLIMIT = 10
+# this extension will be appended to the end of files
+EXT = ".enc"
+
+# random names consist of "NAMEPREFIX" followed by a random portion
+# if random rename is used, the length of the random portion
 RENAMELEN = 4
-# if random rename is used. this fixed prefix will be added to every file name
+# if random rename is used. this fixed prefix will be used in every file name
 NAMEPREFIX = "B"
 
 # input path of files
 INPATH = "./"
 # output path of files
 OUTPATH = "$HOME/"
+# ----------------------------------------------------------------------------
 
 
 class GuardObj():
@@ -74,11 +80,14 @@ class GuardObj():
         password = ''.join(choice(alphabet) for i in range(PASSLENGTH))
         self._key = password
 
-        retVal = run(["gpg", "--batch", "--passphrase", password,
-                "--digest-algo", DIGEST, "--symmetric",
-                "--cipher-algo", CIPHER, "--compress-level", COMP,
-                "--output", OUTPATH + self._fileName + EXT,
-                INPATH + self._fileName])
+        retVal = run(["gpg", "--batch",
+                      "--passphrase", password,
+                      "--digest-algo", DIGEST,
+                      "--symmetric",
+                      "--cipher-algo", CIPHER,
+                      "--compress-level", COMP,
+                      "--output", OUTPATH + self._fileName + EXT,
+                      INPATH + self._fileName])
 
         retVal.check_returncode()
         self._isEncrypted = True
@@ -94,10 +103,16 @@ class GuardObj():
             raise Exception('File has not been encrypted yet')
 
         if self._fileSize > SPLITLIMIT:
+            # Get a reasonable suffixLength
+            suffixLength = len(str(int(self._fileSize * 1.1 / SPLITLIMIT)))
+
             retVal = run(["split", "--bytes=" + str(SPLITLIMIT) + "M",
-                          "--numeric-suffixes", "--suffix-length=2",
+                          "--numeric-suffixes",
+                          "--suffix-length=" + str(suffixLength),
                           "--verbose", OUTPATH + self._fileName + EXT,
-                          OUTPATH + self._fileName + EXT + "."], stdout=PIPE)
+                          OUTPATH + self._fileName + EXT + "."],
+                          stdout=PIPE)
+
             retVal.check_returncode()
             pieces = len(retVal.stdout.decode("utf-8").split("\n")) - 1
             retVal = run(["rm", OUTPATH + self._fileName + EXT])
@@ -111,12 +126,13 @@ class GuardObj():
         '''() -> None
         Renames the file represented by the object instance
         '''
-        
+
         if not self._isEncrypted:
             raise Exception('File has not been encrypted yet')
 
         retVal = run(["mv", OUTPATH + self._fileName + EXT,
                       OUTPATH + newName + EXT])
+
         retVal.check_returncode()
         self._fileName = newName
 
@@ -252,16 +268,17 @@ if __name__ == "__main__":
         quit()
 
     else:
-        print("Platform and config validated\n")
+        print("Platform and config validated")
 
     # Handle path variables ($HOME, etc)
     INPATH = expandvars(INPATH)
     OUTPATH = expandvars(OUTPATH)
 
     print("Using " + CIPHER + ", " + DIGEST + " with " + str(PASSLENGTH) + \
-          " character passphrases. Splitting at " + str(SPLITLIMIT) + \
-          "MB. " + EXT + " extensions." + COMP + " compression\n" + \
-          "Outputting files at " + OUTPATH)
+          " character passphrases\nSplitting every " + str(SPLITLIMIT) + \
+          "MB and adding " + EXT + " extensions\n" + COMP + \
+          " compression level\nOutputting files at " + OUTPATH + \
+          "\nGetting files from " +  INPATH)
 
     fileNameList = [fi for fi in listdir(INPATH) if (isfile(join(INPATH, fi)) \
                                   and fi[-3:] in DETECTEDFILETYPES)]
