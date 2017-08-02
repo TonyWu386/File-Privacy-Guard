@@ -340,7 +340,8 @@ if __name__ == "__main__":
         print("Average speed: " + str(guardObj.getEncryptionSpeed(deltaTime)) \
               + " MB/s\n")
 
-    print ("All files encrypted in " + str(time() - overallStart) + "s\n")
+    print("All files encrypted in " + str(round(time() - overallStart, 2)) \
+           + "s\n")
 
     while userIn != 'v':
         userIn = input("Enter 'v' to view passphrases\n")
@@ -362,8 +363,8 @@ if __name__ == "__main__":
                 newName = NAMEPREFIX
                 newName += ''.join(choice(digits) for i in range(RENAMELEN))
                 newName += "." + guardObj.getExtension()
-                print("Automatically renaming " + newName + " to " + \
-                      str(guardObj))
+                print("Automatically renaming " + str(guardObj) + " to " + \
+                      newName)
             guardObj.rename(newName)
 
     # Splitting
